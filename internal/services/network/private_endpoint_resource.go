@@ -1053,16 +1053,23 @@ func deletePrivateDnsZoneGroupForPrivateEndpoint(ctx context.Context, client *pr
 		}
 
 		if err := retry.RetryContext(ctx, time.Until(deadline), func() *retry.RetryError {
-			if err := client.DeleteThenPoll(ctx, privateDnsZoneId); err != nil {
-				// DeleteThenPoll does not expose the HTTP response or preserve typed errors.
-				if strings.Contains(err.Error(), "performing Delete: unexpected status 404 (") {
+			result, err := client.Delete(ctx, privateDnsZoneId)
+			if err != nil {
+				deleteErr := fmt.Errorf("performing Delete: %+v", err)
+				if response.WasNotFound(result.HttpResponse) {
 					return nil
 				}
-				if strings.Contains(err.Error(), "performing Delete: unexpected status 409 (") &&
-					strings.Contains(err.Error(), "with error: AnotherOperationInProgress:") {
-					return retry.RetryableError(err)
+				if response.WasConflict(result.HttpResponse) &&
+					result.OData != nil &&
+					result.OData.Error != nil &&
+					result.OData.Error.Code != nil &&
+					*result.OData.Error.Code == "AnotherOperationInProgress" {
+					return retry.RetryableError(deleteErr)
 				}
-				return retry.NonRetryableError(err)
+				return retry.NonRetryableError(deleteErr)
+			}
+			if err := result.Poller.PollUntilDone(ctx); err != nil {
+				return retry.NonRetryableError(fmt.Errorf("polling after Delete: %+v", err))
 			}
 			return nil
 		}); err != nil {
