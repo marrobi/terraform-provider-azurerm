@@ -29,6 +29,7 @@ import (
 	"github.com/hashicorp/go-azure-sdk/resource-manager/redis/2024-03-01/redis"
 	"github.com/hashicorp/go-azure-sdk/resource-manager/signalr/2024-03-01/signalr"
 	"github.com/hashicorp/go-azure-sdk/sdk/client/pollers"
+	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/retry"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-provider-azurerm/helpers/azure"
 	"github.com/hashicorp/terraform-provider-azurerm/helpers/tf"
@@ -989,6 +990,9 @@ func flattenPrivateLinkEndpointServiceConnection(serviceConnections *[]privateen
 }
 
 func createPrivateDnsZoneGroupForPrivateEndpoint(ctx context.Context, client *privatednszonegroups.PrivateDnsZoneGroupsClient, id privateendpoints.PrivateEndpointId, inputRaw []any) error {
+	locks.ByName(strings.ToLower(id.ID()), "azurerm_private_endpoint_dns_zone_group")
+	defer locks.UnlockByName(strings.ToLower(id.ID()), "azurerm_private_endpoint_dns_zone_group")
+
 	if len(inputRaw) != 1 {
 		return fmt.Errorf("expected a single Private DNS Zone Groups but got %d", len(inputRaw))
 	}
@@ -1027,16 +1031,51 @@ func createPrivateDnsZoneGroupForPrivateEndpoint(ctx context.Context, client *pr
 }
 
 func deletePrivateDnsZoneGroupForPrivateEndpoint(ctx context.Context, client *privatednszonegroups.PrivateDnsZoneGroupsClient, id privateendpoints.PrivateEndpointId) error {
+	locks.ByName(strings.ToLower(id.ID()), "azurerm_private_endpoint_dns_zone_group")
+	defer locks.UnlockByName(strings.ToLower(id.ID()), "azurerm_private_endpoint_dns_zone_group")
+
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return errors.New("internal-error: context had no deadline")
+	}
+
 	// lookup and delete the (should be, Single) Private DNS Zone Group associated with this Private Endpoint
 	privateDnsZoneIds, err := retrievePrivateDnsZoneGroupsForPrivateEndpoint(ctx, client, id)
 	if err != nil {
 		return err
 	}
 
+	deleted := make(map[string]bool)
 	for _, privateDnsZoneId := range *privateDnsZoneIds {
-		if err := client.DeleteThenPoll(ctx, privateDnsZoneId); err != nil {
+		name := strings.ToLower(privateDnsZoneId.PrivateDnsZoneGroupName)
+		if deleted[name] {
+			continue
+		}
+
+		if err := retry.RetryContext(ctx, time.Until(deadline), func() *retry.RetryError {
+			result, err := client.Delete(ctx, privateDnsZoneId)
+			if err != nil {
+				deleteErr := fmt.Errorf("performing Delete: %+v", err)
+				if response.WasNotFound(result.HttpResponse) {
+					return nil
+				}
+				if response.WasConflict(result.HttpResponse) &&
+					result.OData != nil &&
+					result.OData.Error != nil &&
+					result.OData.Error.Code != nil &&
+					*result.OData.Error.Code == "AnotherOperationInProgress" {
+					return retry.RetryableError(deleteErr)
+				}
+				return retry.NonRetryableError(deleteErr)
+			}
+			if err := result.Poller.PollUntilDone(ctx); err != nil {
+				return retry.NonRetryableError(fmt.Errorf("polling after Delete: %+v", err))
+			}
+			return nil
+		}); err != nil {
 			return fmt.Errorf("deleting %s: %+v", privateDnsZoneId, err)
 		}
+		deleted[name] = true
 	}
 
 	return nil

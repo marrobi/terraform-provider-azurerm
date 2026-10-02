@@ -182,6 +182,24 @@ func TestAccPrivateEndpoint_privateDnsZoneRename(t *testing.T) {
 	})
 }
 
+func TestAccPrivateEndpoint_privateDnsZoneGroupMultipleZones(t *testing.T) {
+	data := acceptance.BuildTestData(t, "azurerm_private_endpoint", "test")
+	r := PrivateEndpointResource{}
+
+	data.ResourceTest(t, r, []acceptance.TestStep{
+		{
+			Config: r.privateDnsZoneGroupUpdate(data),
+			Check: acceptance.ComposeTestCheckFunc(
+				check.That(data.ResourceName).ExistsInAzure(r),
+				check.That(data.ResourceName).Key("private_dns_zone_group.0.private_dns_zone_ids.#").HasValue("2"),
+				check.That(data.ResourceName).Key("private_dns_zone_configs.#").HasValue("2"),
+				check.That(data.ResourceName).Key("private_dns_zone_group.#").HasValue("1"),
+			),
+		},
+		data.ImportStep("private_dns_zone_configs", "private_dns_zone_group"),
+	})
+}
+
 func TestAccPrivateEndpoint_privateDnsZoneUpdate(t *testing.T) {
 	data := acceptance.BuildTestData(t, "azurerm_private_endpoint", "test")
 	r := PrivateEndpointResource{}
