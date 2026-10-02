@@ -117,7 +117,7 @@ func TestDeletePrivateDnsZoneGroupForPrivateEndpoint(t *testing.T) {
 			polls:          1,
 			pollHTTPStatus: http.StatusNotFound,
 			timeout:        300 * time.Millisecond,
-			errorContains:  "context deadline exceeded",
+			errorContains:  "deleting",
 		},
 		{
 			name:          "cancellation interrupts retry backoff",
@@ -228,6 +228,9 @@ func TestDeletePrivateDnsZoneGroupForPrivateEndpoint(t *testing.T) {
 			err = deletePrivateDnsZoneGroupForPrivateEndpoint(ctx, dnsClient, id)
 			if testCase.cancelOnError && time.Since(start) >= 400*time.Millisecond {
 				t.Error("cancellation did not interrupt retry backoff")
+			}
+			if testCase.pollHTTPStatus == http.StatusNotFound && ctx.Err() != context.DeadlineExceeded {
+				t.Error("polling not found did not wait for the operation deadline")
 			}
 			if testCase.errorContains == "" {
 				if err != nil {
