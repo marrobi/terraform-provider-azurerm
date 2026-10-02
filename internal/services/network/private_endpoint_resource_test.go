@@ -188,11 +188,11 @@ func TestAccPrivateEndpoint_privateDnsZoneGroupMultipleZones(t *testing.T) {
 
 	data.ResourceTest(t, r, []acceptance.TestStep{
 		{
-			Config: r.privateDnsZoneGroupUpdate(data),
+			Config: r.privateDnsZoneGroupMultipleZones(data),
 			Check: acceptance.ComposeTestCheckFunc(
 				check.That(data.ResourceName).ExistsInAzure(r),
-				check.That(data.ResourceName).Key("private_dns_zone_group.0.private_dns_zone_ids.#").HasValue("2"),
-				check.That(data.ResourceName).Key("private_dns_zone_configs.#").HasValue("2"),
+				check.That(data.ResourceName).Key("private_dns_zone_group.0.private_dns_zone_ids.#").HasValue("5"),
+				check.That(data.ResourceName).Key("private_dns_zone_configs.#").HasValue("5"),
 				check.That(data.ResourceName).Key("private_dns_zone_group.#").HasValue("1"),
 			),
 		},
@@ -903,6 +903,81 @@ resource "azurerm_private_endpoint" "test" {
   }
 }
 `, data.RandomInteger, data.Locations.Primary, data.RandomInteger, data.RandomInteger, data.RandomInteger, data.RandomInteger, data.RandomInteger, data.RandomInteger)
+}
+
+func (PrivateEndpointResource) privateDnsZoneGroupMultipleZones(data acceptance.TestData) string {
+	return fmt.Sprintf(`
+provider "azurerm" {
+  features {}
+}
+
+resource "azurerm_resource_group" "test" {
+  name     = "acctestRG-privatelink-%d"
+  location = "%s"
+}
+
+resource "azurerm_virtual_network" "test" {
+  name                = "acctestvnet-%d"
+  resource_group_name = azurerm_resource_group.test.name
+  location            = azurerm_resource_group.test.location
+  address_space       = ["10.5.0.0/16"]
+}
+
+resource "azurerm_subnet" "endpoint" {
+  name                 = "acctestsnetendpoint-%d"
+  resource_group_name  = azurerm_resource_group.test.name
+  virtual_network_name = azurerm_virtual_network.test.name
+  address_prefixes     = ["10.5.2.0/24"]
+
+  private_endpoint_network_policies = "Disabled"
+}
+
+resource "azurerm_monitor_private_link_scope" "test" {
+  name                = "acctest-ampls-%d"
+  resource_group_name = azurerm_resource_group.test.name
+}
+
+resource "azurerm_private_dns_zone" "test" {
+  for_each = toset([
+    "privatelink.monitor.azure.com",
+    "privatelink.oms.opinsights.azure.com",
+    "privatelink.ods.opinsights.azure.com",
+    "privatelink.agentsvc.azure-automation.net",
+    "privatelink.blob.core.windows.net",
+  ])
+
+  name                = each.value
+  resource_group_name = azurerm_resource_group.test.name
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "test" {
+  for_each = azurerm_private_dns_zone.test
+
+  name                  = "acctest-link-%d"
+  resource_group_name   = azurerm_resource_group.test.name
+  private_dns_zone_name = each.value.name
+  virtual_network_id    = azurerm_virtual_network.test.id
+}
+
+resource "azurerm_private_endpoint" "test" {
+  name                = "acctest-privatelink-%d"
+  location            = azurerm_resource_group.test.location
+  resource_group_name = azurerm_resource_group.test.name
+  subnet_id           = azurerm_subnet.endpoint.id
+
+  private_dns_zone_group {
+    name                 = "acctest-dzg-%d"
+    private_dns_zone_ids = [for zone in azurerm_private_dns_zone.test : zone.id]
+  }
+
+  private_service_connection {
+    name                           = "acctest-privatelink-psc-%d"
+    private_connection_resource_id = azurerm_monitor_private_link_scope.test.id
+    subresource_names              = ["azuremonitor"]
+    is_manual_connection           = false
+  }
+}
+`, data.RandomInteger, data.Locations.Primary, data.RandomInteger, data.RandomInteger, data.RandomInteger, data.RandomInteger, data.RandomInteger, data.RandomInteger, data.RandomInteger)
 }
 
 func (PrivateEndpointResource) privateDnsZoneGroupUpdate(data acceptance.TestData) string {

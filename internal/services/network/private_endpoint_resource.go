@@ -1045,13 +1045,9 @@ func deletePrivateDnsZoneGroupForPrivateEndpoint(ctx context.Context, client *pr
 		return err
 	}
 
-	deleted := make(map[string]bool)
 	for _, privateDnsZoneId := range *privateDnsZoneIds {
-		name := strings.ToLower(privateDnsZoneId.PrivateDnsZoneGroupName)
-		if deleted[name] {
-			continue
-		}
-
+		// Retry Azure 409 AnotherOperationInProgress while endpoint or dependent resource operations finish.
+		// The endpoint lock only serializes this resource's own DNS zone group create/delete calls.
 		if err := retry.RetryContext(ctx, time.Until(deadline), func() *retry.RetryError {
 			result, err := client.Delete(ctx, privateDnsZoneId)
 			if err != nil {
@@ -1075,7 +1071,6 @@ func deletePrivateDnsZoneGroupForPrivateEndpoint(ctx context.Context, client *pr
 		}); err != nil {
 			return fmt.Errorf("deleting %s: %+v", privateDnsZoneId, err)
 		}
-		deleted[name] = true
 	}
 
 	return nil
