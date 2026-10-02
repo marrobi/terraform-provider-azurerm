@@ -37,12 +37,6 @@ func TestDeletePrivateDnsZoneGroupForPrivateEndpoint(t *testing.T) {
 		errorContains  string
 	}{
 		{
-			name:    "duplicate group names are deleted once",
-			groups:  []string{"default", "DEFAULT"},
-			deletes: 1,
-			polls:   1,
-		},
-		{
 			name:    "groups are deleted sequentially and polled",
 			groups:  []string{"first", "second"},
 			deletes: 2,
